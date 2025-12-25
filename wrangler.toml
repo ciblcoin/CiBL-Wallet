@@ -1,0 +1,12 @@
+name = "cibl-wallet"
+compatibility_date = "2024-12-25"
+account_id = "0676c9cd0587b094c004d500c022fb73"
+workers_dev = true
+
+[site]
+bucket = "./.next/static"
+entry-point = ".open-next"
+
+[[routes]]
+pattern = "cibl.app/*"
+zone_name = "cibl.app"
