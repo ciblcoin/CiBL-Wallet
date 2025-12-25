@@ -1,0 +1,11 @@
+node_modules/
+.next/
+.open-next/
+.env*.local
+.DS_Store
+*.log
+coverage/
+.vscode/
+.solana/
+dist/
+build/
