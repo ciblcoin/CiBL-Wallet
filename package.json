@@ -10,7 +10,7 @@
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
-    "@jup-ag/api": "^7.3.2",
+    "@jup-ag/api": "^6.0.47"
     "@project-serum/anchor": "^0.29.0",
     "@solana/spl-token": "^0.4.10",
     "@solana/wallet-adapter-base": "^0.9.23",
