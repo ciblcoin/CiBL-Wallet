@@ -193,3 +193,24 @@ components/
 └── UI/
     ├── SlideoutPanel.jsx
     └── NotificationBadge.jsx
+
+
+
+
+
+
+cibl-wallet/
+├── contracts/
+│   ├── lib.rs              # Main contract logic
+│   ├── cibl_challenge.json # IDL file
+│   └── program-info.json   # Auto-generated after deployment
+├── scripts/
+│   └── deployChallenge.js  # Deployment script
+├── target/
+│   └── deploy/
+│       └── cibl_challenge.so  # Compiled program
+└── app/
+    └── page.jsx            # Frontend integration
+
+
+
