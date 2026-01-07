@@ -178,4 +178,18 @@ Important: Always test with small amounts first. This is experimental software. 
 
 
 
-
+components/
+├── Chat/
+│   ├── ChatSlideout.jsx
+│   └── ChatMessage.jsx
+├── Challenge/
+│   ├── ChallengeSlideout.jsx
+│   ├── CreateChallenge.jsx
+│   └── ChallengeList.jsx
+├── Wallet/
+│   ├── WalletManager.jsx
+│   ├── WalletDashboard.jsx
+│   └── TokenList.jsx
+└── UI/
+    ├── SlideoutPanel.jsx
+    └── NotificationBadge.jsx
