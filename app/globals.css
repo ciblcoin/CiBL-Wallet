@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mobile Optimizations for Slideouts */
+@layer components {
+  /* Better touch targets for mobile */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Slideout animations */
+  .slideout-enter {
+    transform: translateX(100%);
+  }
+  
+  .slideout-enter-active {
+    transform: translateX(0);
+    transition: transform 300ms ease-out;
+  }
+  
+  .slideout-exit {
+    transform: translateX(0);
+  }
+  
+  .slideout-exit-active {
+    transform: translateX(100%);
+    transition: transform 300ms ease-in;
+  }
+  
+  /* Prevent body scroll when slideout is open */
+  .no-scroll {
+    overflow: hidden;
+    position: fixed;
+    width: 100%;
+  }
+  
+  /* Swipe to close indicator */
+  .swipe-indicator {
+    width: 40px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 2px;
+    margin: 8px auto;
+  }
+}
+
+/* Custom scrollbar for mobile */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(59, 130, 246, 0.5) rgba(30, 41, 59, 0.1);
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: rgba(30, 41, 59, 0.1);
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(59, 130, 246, 0.5);
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: rgba(59, 130, 246, 0.7);
+  }
+}
+
+/* Hide scrollbar on mobile when not scrolling */
+@media (max-width: 768px) {
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Safe area insets for modern mobile devices */
+@supports (padding: max(0px)) {
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top), 1rem);
+  }
+  
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+  }
+  
+  .safe-left {
+    padding-left: max(env(safe-area-inset-left), 1rem);
+  }
+  
+  .safe-right {
+    padding-right: max(env(safe-area-inset-right), 1rem);
+  }
+}
+
+/* Performance optimizations */
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* Prevent text size adjustment on orientation change */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Smooth transitions */
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}
+
+/* Mobile-first responsive breakpoints */
+@screen sm {
+  .slideout-panel {
+    width: 85%;
+  }
+}
+
+@screen lg {
+  .slideout-panel {
+    width: 400px;
+  }
+}
+
+/* Hardware acceleration for smooth animations */
+.hardware-accelerate {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+
+/* Loading skeleton animation */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* Pull to refresh indicator */
+.pull-indicator {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.pull-indicator.active {
+  opacity: 1;
+}
+
+.pull-indicator svg {
+  transition: transform 0.3s;
+}
+
+.pull-indicator.pulling svg {
+  transform: rotate(180deg);
+}
