@@ -1,0 +1,63 @@
+{
+  "version": "0.1.0",
+  "name": "cibl_challenge",
+  "instructions": [
+    {
+      "name": "createChallenge",
+      "accounts": [
+        { "name": "challengeAccount", "isMut": true, "isSigner": true },
+        { "name": "creator", "isMut": true, "isSigner": true },
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" },
+        { "name": "assetPair", "type": "string" },
+        { "name": "durationSeconds", "type": "u64" }
+      ]
+    },
+    {
+      "name": "acceptChallenge",
+      "accounts": [
+        { "name": "challengeAccount", "isMut": true, "isSigner": false },
+        { "name": "acceptor", "isMut": true, "isSigner": true },
+        { "name": "creator", "isMut": false, "isSigner": false }
+      ],
+      "args": []
+    },
+    {
+      "name": "submitEntryPrice",
+      "accounts": [
+        { "name": "challengeAccount", "isMut": true, "isSigner": false },
+        { "name": "user", "isMut": true, "isSigner": true }
+      ],
+      "args": [
+        { "name": "price", "type": "u64" }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Challenge",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "creator", "type": "publicKey" },
+          { "name": "acceptor", "type": { "option": "publicKey" } },
+          { "name": "amount", "type": "u64" },
+          { "name": "assetPair", "type": "string" },
+          { "name": "status", "type": "u8" },
+          { "name": "startTime", "type": { "option": "i64" } },
+          { "name": "endTime", "type": { "option": "i64" } },
+          { "name": "creatorEntryPrice", "type": { "option": "u64" } },
+          { "name": "acceptorEntryPrice", "type": { "option": "u64" } },
+          { "name": "winner", "type": { "option": "publicKey" } }
+        ]
+      }
+    }
+  ],
+  "errors": [
+    { "code": 6000, "name": "ChallengeAlreadyAccepted", "msg": "Challenge has already been accepted" },
+    { "code": 6001, "name": "ChallengeNotActive", "msg": "Challenge is not active" },
+    { "code": 6002, "name": "UnauthorizedUser", "msg": "User not authorized for this action" }
+  ]
+}
