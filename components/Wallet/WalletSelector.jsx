@@ -16,124 +16,78 @@ import {
   PhantomWalletAdapter,
   SolflareWalletAdapter,
   TorusWalletAdapter,
-  LedgerWalletAdapter,
-  SolletWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
 import { clusterApiUrl } from '@solana/web3.js';
 import { createClient } from '@/lib/supabase/client';
+import useUser from '@/hooks/useUser';
+import Link from 'next/link';
 
-// Default styles for wallet buttons
+// Import default wallet styles
 import '@solana/wallet-adapter-react-ui/styles.css';
 
 function WalletContent() {
-  const { publicKey, wallet, disconnect, signMessage } = useWallet();
+  const { publicKey, wallet, connect, disconnect, connected } = useWallet();
   const { connection } = useConnection();
   const [balance, setBalance] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [profile, setProfile] = useState(null);
-  const [supabase] = useState(() => createClient());
+  const [walletLoading, setWalletLoading] = useState(false);
+  const supabase = createClient();
+  const { user, profile, connectWallet, logout } = useUser();
 
-  // Fetch balance when wallet connects
+  // Handle wallet connection and profile linking
   useEffect(() => {
-    if (publicKey && connection) {
-      const fetchBalance = async () => {
+    const handleWalletConnection = async () => {
+      if (connected && publicKey) {
+        setWalletLoading(true);
         try {
-          const balance = await connection.getBalance(publicKey);
-          setBalance(balance / 1000000000); // Convert lamports to SOL
+          const walletAddress = publicKey.toString();
+          
+          // Connect wallet and get profile
+          await connectWallet(walletAddress);
+          
+          // Fetch wallet balance
+          const balanceLamports = await connection.getBalance(publicKey);
+          setBalance(balanceLamports / 1000000000); // Convert lamports to SOL
+          
         } catch (error) {
-          console.error('Error fetching balance:', error);
-        }
-      };
-      fetchBalance();
-      
-      // Also update profile with wallet address
-      updateProfileWithWallet();
-    } else {
-      setBalance(null);
-      setProfile(null);
-    }
-  }, [publicKey, connection]);
-
-  // Update user profile with wallet address
-  const updateProfileWithWallet = async () => {
-    if (!publicKey || !wallet) return;
-    
-    try {
-      // Check if user is authenticated via Supabase Auth
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      if (user) {
-        // User is logged in with email - link wallet to existing profile
-        const { error } = await supabase
-          .from('profiles')
-          .upsert({
-            auth_id: user.id,
-            solana_address: publicKey.toString(),
-            updated_at: new Date().toISOString(),
-          }, {
-            onConflict: 'auth_id'
-          });
-
-        if (error) {
-          console.error('Error linking wallet:', error);
-        } else {
-          console.log('Wallet linked to profile');
+          console.error('Error handling wallet connection:', error);
+        } finally {
+          setWalletLoading(false);
         }
       } else {
-        // User is not logged in with email - check if wallet profile exists
-        const { data: existingProfile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('solana_address', publicKey.toString())
-          .single();
-
-        if (existingProfile) {
-          setProfile(existingProfile);
-        } else {
-          // Create new profile for wallet-only user
-          const username = `wallet_${publicKey.toString().slice(0, 8)}`;
-          const { data: newProfile } = await supabase
-            .from('profiles')
-            .insert({
-              solana_address: publicKey.toString(),
-              username: username,
-              email: null,
-              auth_id: null,
-            })
-            .select()
-            .single();
-
-          if (newProfile) {
-            setProfile(newProfile);
-          }
-        }
+        setBalance(null);
       }
-    } catch (error) {
-      console.error('Error in wallet profile setup:', error);
-    }
-  };
+    };
 
-  // Sign message for authentication (optional)
+    handleWalletConnection();
+  }, [connected, publicKey?.toString(), connection, connectWallet]);
+
+  // Sign message for authentication
   const handleSignMessage = async () => {
-    if (!publicKey || !signMessage) {
+    if (!publicKey || !window.solana?.signMessage) {
       alert('Wallet does not support message signing');
       return;
     }
 
-    setLoading(true);
+    setWalletLoading(true);
     try {
       const message = `Sign this message to authenticate with CiBL Wallet at ${Date.now()}`;
       const encodedMessage = new TextEncoder().encode(message);
-      const signature = await signMessage(encodedMessage);
       
-      // Here you would send the signature to your backend for verification
-      console.log('Signature:', signature);
+      // Sign message with wallet
+      const { signature } = await window.solana.signMessage(
+        encodedMessage,
+        'utf8'
+      );
+      
+      // Here you can send signature to backend for verification
+      console.log('Message signature:', signature);
       alert('Message signed successfully!');
+      
     } catch (error) {
       console.error('Error signing message:', error);
       alert('Failed to sign message');
     } finally {
-      setLoading(false);
+      setWalletLoading(false);
     }
   };
 
@@ -142,6 +96,17 @@ function WalletContent() {
     if (publicKey) {
       navigator.clipboard.writeText(publicKey.toString());
       alert('Address copied to clipboard!');
+    }
+  };
+
+  // Disconnect wallet handler
+  const handleDisconnect = async () => {
+    try {
+      await disconnect();
+      logout('wallet');
+      setBalance(null);
+    } catch (error) {
+      console.error('Error disconnecting wallet:', error);
     }
   };
 
@@ -160,7 +125,7 @@ function WalletContent() {
             <WalletMultiButton className="!bg-gradient-to-r !from-blue-600 !to-purple-600 !rounded-lg !font-bold !py-3 !px-6 hover:!from-blue-700 hover:!to-purple-700" />
           </div>
 
-          {wallet && publicKey && (
+          {wallet && publicKey && user && (
             <div className="mt-6 p-4 bg-slate-800/50 rounded-xl border border-slate-700">
               <div className="space-y-4">
                 {/* Wallet Info */}
@@ -175,14 +140,14 @@ function WalletContent() {
                     </div>
                   </div>
                   <button
-                    onClick={disconnect}
+                    onClick={handleDisconnect}
                     className="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 rounded-lg font-bold"
                   >
                     Disconnect
                   </button>
                 </div>
 
-                {/* Address */}
+                {/* Wallet Address */}
                 <div>
                   <p className="text-sm text-slate-400 mb-1">Wallet Address</p>
                   <div className="flex items-center gap-2">
@@ -199,7 +164,7 @@ function WalletContent() {
                   </div>
                 </div>
 
-                {/* Balance */}
+                {/* Balance Display */}
                 {balance !== null && (
                   <div>
                     <p className="text-sm text-slate-400 mb-1">Balance</p>
@@ -210,7 +175,7 @@ function WalletContent() {
                             {balance.toFixed(4)} SOL
                           </span>
                           <span className="text-slate-400 text-sm">
-                            ≈ ${(balance * 100).toFixed(2)} {/* Example conversion */}
+                            ≈ ${(balance * 100).toFixed(2)}
                           </span>
                         </div>
                       </div>
@@ -241,18 +206,18 @@ function WalletContent() {
                   </div>
                 )}
 
-                {/* Actions */}
+                {/* Action Buttons */}
                 <div className="grid grid-cols-2 gap-2 pt-2">
                   <button
                     onClick={handleSignMessage}
-                    disabled={loading || !signMessage}
+                    disabled={walletLoading || !window.solana?.signMessage}
                     className={`py-2 rounded-lg font-bold ${
-                      loading || !signMessage
+                      walletLoading || !window.solana?.signMessage
                         ? 'bg-gray-700 cursor-not-allowed'
                         : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700'
                     }`}
                   >
-                    {loading ? 'Signing...' : 'Sign Message'}
+                    {walletLoading ? 'Signing...' : 'Sign Message'}
                   </button>
                   <Link
                     href="/swap"
@@ -274,7 +239,7 @@ function WalletContent() {
                     { name: 'Phantom', color: 'from-purple-500 to-pink-500' },
                     { name: 'Solflare', color: 'from-orange-500 to-red-500' },
                     { name: 'Torus', color: 'from-blue-500 to-cyan-500' },
-                    { name: 'Ledger', color: 'from-gray-700 to-gray-900' },
+                    { name: 'Backpack', color: 'from-green-500 to-emerald-500' },
                   ].map((wallet) => (
                     <div
                       key={wallet.name}
@@ -306,10 +271,8 @@ export default function WalletSelector() {
       new PhantomWalletAdapter(),
       new SolflareWalletAdapter(),
       new TorusWalletAdapter(),
-      new LedgerWalletAdapter(),
-      new SolletWalletAdapter({ network }),
     ],
-    [network]
+    []
   );
 
   return (
