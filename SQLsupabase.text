@@ -1,0 +1,420 @@
+-- ============================================
+-- CiBL Wallet Database Full Reset Script
+-- WARNING: This script will DESTROY all existing data!
+-- Run only in development environment.
+-- ============================================
+
+-- Disable replication to prevent errors during reset
+SET session_replication_role = 'replica';
+
+-- ------------------------------------------------------------
+-- 1. DROP EXISTING STRUCTURES (in dependency order)
+-- ------------------------------------------------------------
+DROP TABLE IF EXISTS public.chat_messages CASCADE;
+DROP TABLE IF EXISTS public.challenges CASCADE;
+DROP TABLE IF EXISTS public.profiles CASCADE;
+
+DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
+DROP FUNCTION IF EXISTS public.claim_challenge(UUID, UUID) CASCADE;
+DROP FUNCTION IF EXISTS public.get_wallet_profile(TEXT) CASCADE;
+DROP FUNCTION IF EXISTS public.update_updated_at_column() CASCADE;
+
+-- ------------------------------------------------------------
+-- 2. CREATE NEW TABLES
+-- ------------------------------------------------------------
+
+-- User profiles table (links Auth with app data)
+CREATE TABLE public.profiles (
+    -- Primary ID, references auth.users
+    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    
+    -- Account type: 'wallet_only', 'email_only', 'full'
+    user_type VARCHAR(20) NOT NULL DEFAULT 'wallet_only' 
+        CHECK (user_type IN ('wallet_only', 'email_only', 'full')),
+    
+    -- Solana wallet address (unique for wallet_only/full users)
+    solana_address VARCHAR(44) UNIQUE,
+    
+    -- Email (unique for email_only/full users)
+    email VARCHAR(255) UNIQUE,
+    
+    -- Display username (can be generated from wallet address)
+    username VARCHAR(50) NOT NULL UNIQUE,
+    
+    -- Is email verified?
+    email_verified BOOLEAN DEFAULT FALSE,
+    
+    -- Is wallet connected?
+    wallet_connected BOOLEAN DEFAULT FALSE,
+    
+    -- Temporary email for wallet-only users requesting upgrade
+    temp_email VARCHAR(255),
+    
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+COMMENT ON TABLE public.profiles IS 'Main user profiles for CiBL Wallet hybrid authentication (email + wallet)';
+
+-- Trading challenges table
+CREATE TABLE public.challenges (
+    -- Challenge ID
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Challenge creator
+    creator_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    
+    -- Challenge acceptor (initially NULL)
+    acceptor_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    
+    -- Challenge status
+    status VARCHAR(20) NOT NULL DEFAULT 'open' 
+        CHECK (status IN ('open', 'joined', 'active', 'completed', 'expired', 'cancelled')),
+    
+    -- Stake amount (in USD)
+    amount_usd DECIMAL(10, 2) NOT NULL CHECK (amount_usd >= 5),
+    
+    -- Trading pair
+    asset_pair VARCHAR(20) NOT NULL DEFAULT 'SOL/USDC',
+    
+    -- Challenge duration (seconds)
+    timeframe_seconds INTEGER NOT NULL DEFAULT 60,
+    
+    -- Market entry price (for PnL calculation)
+    entry_price DECIMAL(20, 8),
+    
+    -- Calculated results
+    creator_pnl DECIMAL(20, 8),  -- Creator profit/loss
+    acceptor_pnl DECIMAL(20, 8), -- Acceptor profit/loss
+    
+    -- On-chain transaction signatures
+    creator_tx_signature TEXT,
+    acceptor_tx_signature TEXT,
+    
+    -- Timestamps
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    expires_at TIMESTAMPTZ DEFAULT (NOW() + INTERVAL '5 minutes') NOT NULL,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    
+    -- Winner ID
+    winner_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL
+);
+
+COMMENT ON TABLE public.challenges IS 'Trading challenges between users';
+
+-- Public chat messages table
+CREATE TABLE public.chat_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    
+    -- If message is related to a specific challenge
+    challenge_id UUID REFERENCES public.challenges(id) ON DELETE SET NULL,
+    
+    -- Message text (max 300 chars)
+    message VARCHAR(300) NOT NULL,
+    
+    -- Message type
+    message_type VARCHAR(20) DEFAULT 'user_message' 
+        CHECK (message_type IN ('user_message', 'system_challenge', 'system_join')),
+    
+    -- Chat room (for future expansion)
+    room VARCHAR(50) DEFAULT 'general' NOT NULL,
+    
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+COMMENT ON TABLE public.chat_messages IS 'Public chat messages and challenge-related communications';
+
+-- ------------------------------------------------------------
+-- 3. CREATE INDEXES FOR PERFORMANCE
+-- ------------------------------------------------------------
+-- Index for quick user lookup by wallet address
+CREATE INDEX idx_profiles_solana_address ON public.profiles(solana_address) 
+    WHERE solana_address IS NOT NULL;
+    
+-- Index for quick user lookup by email
+CREATE INDEX idx_profiles_email ON public.profiles(email) 
+    WHERE email IS NOT NULL;
+
+-- Challenges table indexes for common queries
+CREATE INDEX idx_challenges_status ON public.challenges(status);
+CREATE INDEX idx_challenges_creator ON public.challenges(creator_id);
+CREATE INDEX idx_challenges_acceptor ON public.challenges(acceptor_id);
+CREATE INDEX idx_challenges_expires ON public.challenges(expires_at) 
+    WHERE status = 'open';
+
+-- Chat messages indexes for efficient loading
+CREATE INDEX idx_chat_messages_created ON public.chat_messages(created_at DESC);
+CREATE INDEX idx_chat_messages_room ON public.chat_messages(room);
+CREATE INDEX idx_chat_messages_challenge ON public.chat_messages(challenge_id) 
+    WHERE challenge_id IS NOT NULL;
+
+-- ------------------------------------------------------------
+-- 4. HELPER FUNCTIONS AND TRIGGERS
+-- ------------------------------------------------------------
+
+-- Function to auto-update updated_at timestamp
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for auto-updating profiles.updated_at
+CREATE TRIGGER update_profiles_updated_at
+    BEFORE UPDATE ON public.profiles
+    FOR EACH ROW
+    EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Auth hook function to auto-create profile after user registration
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_username VARCHAR(50);
+BEGIN
+    -- If user signed up with email (has email)
+    IF NEW.email IS NOT NULL THEN
+        -- Create username from email prefix
+        v_username := split_part(NEW.email, '@', 1);
+        
+        -- Ensure username uniqueness
+        IF EXISTS (SELECT 1 FROM public.profiles WHERE username = v_username) THEN
+            v_username := v_username || '_' || substr(NEW.id::text, 1, 8);
+        END IF;
+        
+        INSERT INTO public.profiles (id, user_type, email, username, email_verified)
+        VALUES (
+            NEW.id,
+            'email_only', -- Initially user only has email
+            NEW.email,
+            v_username,
+            NEW.email_confirmed_at IS NOT NULL -- If email was already confirmed
+        );
+    END IF;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for auto-creating profiles for new auth users
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_new_user();
+
+-- Function to find or create profile for wallet-only users
+CREATE OR REPLACE FUNCTION public.get_wallet_profile(wallet_address TEXT)
+RETURNS UUID -- Profile ID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_profile_id UUID;
+    v_username VARCHAR(50);
+BEGIN
+    -- Try to find existing profile
+    SELECT id INTO v_profile_id
+    FROM public.profiles
+    WHERE solana_address = wallet_address;
+    
+    IF FOUND THEN
+        RETURN v_profile_id;
+    END IF;
+    
+    -- Create new profile
+    v_username := 'wallet_' || substr(wallet_address, 1, 6) || substr(wallet_address, -4);
+    
+    -- Insert new profile (no auth_id since user didn't sign up via Auth)
+    INSERT INTO public.profiles (solana_address, username, user_type, wallet_connected)
+    VALUES (wallet_address, v_username, 'wallet_only', TRUE)
+    RETURNING id INTO v_profile_id;
+    
+    RETURN v_profile_id;
+END;
+$$;
+
+-- Atomic function to accept challenges and prevent race conditions
+CREATE OR REPLACE FUNCTION public.claim_challenge(
+    p_challenge_id UUID,
+    p_acceptor_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_challenge_record challenges%ROWTYPE;
+    v_result JSONB;
+BEGIN
+    -- Start transaction with SERIALIZABLE isolation level (should be set client-side)
+    -- SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+    
+    -- Lock the target challenge row for update
+    SELECT * INTO v_challenge_record
+    FROM challenges
+    WHERE id = p_challenge_id
+    FOR UPDATE; -- Use row-level locking
+    
+    -- Check acceptance conditions
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Challenge not found.');
+    END IF;
+    
+    IF v_challenge_record.status != 'open' THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Challenge is no longer available.');
+    END IF;
+    
+    IF v_challenge_record.creator_id = p_acceptor_id THEN
+        RETURN jsonb_build_object('success', false, 'error', 'You cannot join your own challenge.');
+    END IF;
+    
+    -- Update the challenge
+    UPDATE challenges
+    SET
+        acceptor_id = p_acceptor_id,
+        status = 'joined',
+        started_at = NOW()
+    WHERE id = p_challenge_id;
+    
+    -- Build success response
+    SELECT jsonb_build_object(
+        'success', true,
+        'challenge_id', p_challenge_id,
+        'acceptor_id', p_acceptor_id,
+        'message', 'Challenge successfully accepted.'
+    ) INTO v_result;
+    
+    RETURN v_result;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        -- Return error
+        RETURN jsonb_build_object(
+            'success', false,
+            'error', SQLERRM
+        );
+END;
+$$;
+
+-- ------------------------------------------------------------
+-- 5. ROW LEVEL SECURITY (RLS) POLICIES
+-- ------------------------------------------------------------
+
+-- Enable RLS for all tables
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.challenges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if any
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone" ON public.profiles;
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+DROP POLICY IF EXISTS "Users can insert own profile" ON public.profiles;
+
+DROP POLICY IF EXISTS "Challenges are viewable by everyone" ON public.challenges;
+DROP POLICY IF EXISTS "Users can create challenges" ON public.challenges;
+DROP POLICY IF EXISTS "Challenge participants can update" ON public.challenges;
+
+DROP POLICY IF EXISTS "Chat messages are viewable by everyone" ON public.chat_messages;
+DROP POLICY IF EXISTS "Authenticated users can send messages" ON public.chat_messages;
+
+-- **profiles table policies**
+-- Everyone can view profiles (for chat and challenges)
+CREATE POLICY "Public profiles are viewable by everyone"
+ON public.profiles FOR SELECT
+USING (true);
+
+-- Users can update their own profile
+CREATE POLICY "Users can update own profile"
+ON public.profiles FOR UPDATE
+USING (auth.uid() = id OR auth.jwt() ->> 'role' = 'service_role');
+
+-- Users can insert their own profile (via handle_new_user hook)
+CREATE POLICY "Users can insert own profile"
+ON public.profiles FOR INSERT
+WITH CHECK (auth.uid() = id OR auth.jwt() ->> 'role' = 'service_role');
+
+-- **challenges table policies**
+-- Everyone can view open and active challenges
+CREATE POLICY "Challenges are viewable by everyone"
+ON public.challenges FOR SELECT
+USING (true);
+
+-- Users can create new challenges
+CREATE POLICY "Users can create challenges"
+ON public.challenges FOR INSERT
+WITH CHECK (auth.uid() = creator_id);
+
+-- Challenge creator or acceptor can update it
+CREATE POLICY "Challenge participants can update"
+ON public.challenges FOR UPDATE
+USING (
+    auth.uid() IN (creator_id, acceptor_id) 
+    OR 
+    auth.jwt() ->> 'role' = 'service_role'
+);
+
+-- **chat_messages table policies**
+-- Everyone can view chat messages
+CREATE POLICY "Chat messages are viewable by everyone"
+ON public.chat_messages FOR SELECT
+USING (true);
+
+-- Authenticated users can send messages
+CREATE POLICY "Authenticated users can send messages"
+ON public.chat_messages FOR INSERT
+WITH CHECK (auth.uid() = user_id);
+
+-- ------------------------------------------------------------
+-- 6. GRANT NECESSARY PERMISSIONS
+-- ------------------------------------------------------------
+-- Grant schema usage to roles
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+-- profiles table permissions
+GRANT SELECT ON public.profiles TO anon, authenticated;
+GRANT INSERT, UPDATE ON public.profiles TO authenticated, service_role;
+
+-- challenges table permissions
+GRANT SELECT ON public.challenges TO anon, authenticated;
+GRANT INSERT, UPDATE ON public.challenges TO authenticated, service_role;
+
+-- chat_messages table permissions
+GRANT SELECT ON public.chat_messages TO anon, authenticated;
+GRANT INSERT ON public.chat_messages TO authenticated, service_role;
+
+-- Function execution permissions
+GRANT EXECUTE ON FUNCTION public.get_wallet_profile TO anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.claim_challenge TO authenticated, service_role;
+
+-- ------------------------------------------------------------
+-- 7. RE-ENABLE REPLICATION AND COMPLETE OPERATION
+-- ------------------------------------------------------------
+SET session_replication_role = 'origin';
+
+-- Success notification
+DO $$
+BEGIN
+    RAISE NOTICE '
+    ============================================
+    ✅ CiBL Wallet database successfully reset!
+    
+    Tables created:
+      - profiles (users)
+      - challenges (trading challenges)
+      - chat_messages (chat messages)
+    
+    Features activated:
+      ✓ RLS Policies for security
+      ✓ Indexes for performance
+      ✓ Helper functions and triggers
+      ✓ Race condition prevention for challenge acceptance
+      ✓ Auto user registration hook
+    ============================================';
+END $$;
