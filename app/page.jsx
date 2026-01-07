@@ -3,129 +3,85 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import WalletSelector from '@/components/Wallet/WalletSelector';
+import ChatSlideout from '@/components/Chat/ChatSlideout';
+import ChallengeSlideout from '@/components/Challenge/ChallengeSlideout';
 import Link from 'next/link';
-import CreateChallenge from '@/components/CreateChallenge';
-import ChallengeList from '@/components/ChallengeList';
+import useUser from '@/hooks/useUser';
 
-export default function Home() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [loading, setLoading] = useState(true);
+export default function HomePage() {
+  const [showChat, setShowChat] = useState(false);
+  const [showChallenge, setShowChallenge] = useState(false);
+  const [unreadMessages, setUnreadMessages] = useState(0);
+  const [activeChallenges, setActiveChallenges] = useState(0);
+  
   const supabase = createClient();
+  const { user, profile, loading: userLoading, isAuthenticated } = useUser();
 
+  // Load unread messages count
   useEffect(() => {
-    const getUser = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        setCurrentUser(user);
-      } catch (error) {
-        console.error('Error getting user:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+    if (!isAuthenticated) return;
 
-    getUser();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        setCurrentUser(session?.user || null);
-      }
-    );
-
-    return () => {
-      authListener?.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const loadMessages = async () => {
-      const { data } = await supabase
+    const loadUnreadCount = async () => {
+      const { count } = await supabase
         .from('chat_messages')
-        .select('*, profiles:user_id(username)')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (data) setMessages(data.reverse());
+        .select('*', { count: 'exact', head: true })
+        .gt('created_at', new Date(Date.now() - 3600000).toISOString()); // Last hour
+      
+      setUnreadMessages(count || 0);
     };
 
-    loadMessages();
+    loadUnreadCount();
 
+    // Real-time for new messages
     const channel = supabase
-      .channel('public-chat-room')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chat_messages',
-        },
-        async (payload) => {
-          const { data: userProfile } = await supabase
-            .from('profiles')
-            .select('username')
-            .eq('id', payload.new.user_id)
-            .single();
-
-          setMessages((prev) => [
-            ...prev,
-            {
-              ...payload.new,
-              profiles: { username: userProfile?.username || 'Unknown' },
-            },
-          ]);
-        }
-      )
+      .channel('unread_messages')
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_messages'
+      }, () => {
+        setUnreadMessages(prev => prev + 1);
+      })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [isAuthenticated, supabase]);
 
-  const sendMessage = async () => {
-    if (!newMessage.trim()) return;
-    if (!currentUser?.id) {
-      alert('Please sign in to send messages.');
-      return;
-    }
+  // Load active challenges count
+  useEffect(() => {
+    const loadActiveChallenges = async () => {
+      const { count } = await supabase
+        .from('challenges')
+        .select('*', { count: 'exact', head: true })
+        .in('status', ['open', 'joined', 'active']);
+      
+      setActiveChallenges(count || 0);
+    };
 
-    const { error } = await supabase.from('chat_messages').insert([
-      {
-        user_id: currentUser.id,
-        message: newMessage,
-        room: 'general',
-      },
-    ]);
+    loadActiveChallenges();
 
-    if (error) {
-      console.error('Error sending message:', error);
-      alert('Failed to send message: ' + error.message);
-    } else {
-      setNewMessage('');
-    }
-  };
+    const channel = supabase
+      .channel('active_challenges')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'challenges'
+      }, loadActiveChallenges)
+      .subscribe();
 
-  const testSupabaseConnection = async () => {
-    console.log('🔍 Starting Supabase connection test...');
-    try {
-      const { data, error } = await supabase.from('profiles').select('*').limit(1);
-      if (error) {
-        console.error('❌ Supabase connection error:', error.message);
-      } else {
-        console.log('✅ Supabase connection successful! Response:', data);
-      }
-    } catch (err) {
-      console.error('❌ Unexpected error during Supabase test:', err);
-    }
-  };
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase]);
 
-  if (loading) {
+  if (userLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-950">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
-          <p className="mt-4 text-slate-400">Loading...</p>
+          <p className="mt-4 text-slate-400">Loading CiBL Wallet...</p>
         </div>
       </div>
     );
@@ -133,165 +89,167 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-950 text-white">
+      {/* Slideout Components */}
+      <ChatSlideout 
+        isOpen={showChat}
+        onClose={() => setShowChat(false)}
+      />
+      
+      <ChallengeSlideout 
+        isOpen={showChallenge}
+        onClose={() => setShowChallenge(false)}
+      />
+
       {/* Header */}
-      <header className="border-b border-slate-800">
+      <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg"></div>
-              <h1 className="text-2xl font-bold">CiBL Wallet</h1>
+            {/* Logo */}
+            <div className="flex items-center gap-3">
+              <Link href="/" className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-yellow-500 flex items-center justify-center">
+                  <span className="font-bold text-lg">C</span>
+                </div>
+                <h1 className="text-2xl font-bold">CiBL Wallet</h1>
+              </Link>
             </div>
+
+            {/* Right Side Actions */}
             <div className="flex items-center gap-4">
-              {currentUser ? (
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-slate-300">
-                    Welcome, {currentUser.email || 'User'}!
+              {/* Chat Notification Button */}
+              <button
+                onClick={() => setShowChat(true)}
+                className="relative p-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 transition-colors group"
+                aria-label="Open chat"
+              >
+                <span className="text-2xl group-hover:scale-110 transition-transform">💬</span>
+                {unreadMessages > 0 && (
+                  <span className="absolute -top-1 -right-1 w-6 h-6 bg-gradient-to-r from-yellow-500 to-red-500 rounded-full text-xs font-bold flex items-center justify-center animate-pulse">
+                    {unreadMessages > 9 ? '9+' : unreadMessages}
                   </span>
-                  <button
-                    onClick={() => supabase.auth.signOut()}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm"
-                  >
-                    Sign Out
-                  </button>
+                )}
+              </button>
+
+              {/* Challenges Button */}
+              <button
+                onClick={() => setShowChallenge(true)}
+                className="relative p-3 rounded-xl bg-slate-800/50 hover:bg-slate-800 transition-colors group"
+                aria-label="Open challenges"
+              >
+                <span className="text-2xl group-hover:scale-110 transition-transform">⚔️</span>
+                {activeChallenges > 0 && (
+                  <span className="absolute -top-1 -right-1 w-6 h-6 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full text-xs font-bold flex items-center justify-center">
+                    {activeChallenges > 9 ? '9+' : activeChallenges}
+                  </span>
+                )}
+              </button>
+
+              {/* User Profile/Connect */}
+              {isAuthenticated && profile ? (
+                <div className="flex items-center gap-3">
+                  <div className="text-right hidden md:block">
+                    <p className="text-sm font-bold text-white">@{profile.username}</p>
+                    <p className="text-xs text-slate-400">
+                      {profile.user_type === 'wallet_only' 
+                        ? `${profile.solana_address?.slice(0, 6)}...${profile.solana_address?.slice(-4)}`
+                        : profile.email?.split('@')[0]
+                      }
+                    </p>
+                  </div>
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 flex items-center justify-center">
+                    <span className="font-bold">
+                      {profile.username?.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
                 </div>
               ) : (
-                <Link
-                  href="/auth/login"
-                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-lg font-bold"
-                >
-                  Sign In
-                </Link>
+                <div className="text-sm text-slate-400">
+                  Connect to start trading
+                </div>
               )}
-              <button
-                onClick={testSupabaseConnection}
-                className="px-3 py-1 text-sm bg-green-600 hover:bg-green-700 rounded-lg"
-              >
-                Test Connection
-              </button>
             </div>
           </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8">
+        {/* Hero Section */}
+        <div className="text-center mb-12">
+          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-blue-400 to-yellow-400 bg-clip-text text-transparent">
+            Solana Trading Challenges
+          </h1>
+          <p className="text-xl text-slate-400 max-w-2xl mx-auto">
+            Compete in real-time trading duels, chat with the community, 
+            and master the markets with CiBL Wallet.
+          </p>
+        </div>
+
         {/* Wallet Selector */}
-        <div className="mb-8">
+        <div className="mb-12">
           <WalletSelector />
         </div>
 
-        {/* Challenges Section */}
-        <div className="mb-12 grid lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <div className="p-6 bg-slate-800/30 rounded-2xl border border-blue-500/20">
-              <ChallengeList currentUserId={currentUser?.id} />
-            </div>
-          </div>
-          <div>
-            <CreateChallenge currentUserId={currentUser?.id} />
-          </div>
-        </div>
-
-        {/* Live Chat Section */}
-        <div className="mb-12">
-          <div className="p-6 bg-slate-800/30 rounded-2xl border border-blue-500/20">
-            <h2 className="text-2xl font-bold text-white mb-4">💬 Live Chat</h2>
-            
-            <div className="mb-4 h-64 overflow-y-auto bg-slate-900/50 p-4 rounded-lg">
-              {messages.length === 0 ? (
-                <p className="text-slate-400 italic">No messages yet. Start the conversation!</p>
-              ) : (
-                messages.map((msg) => (
-                  <div key={msg.id} className="mb-3 p-3 bg-slate-800/40 rounded-lg">
-                    <div className="flex justify-between text-sm text-slate-400 mb-1">
-                      <span className="text-blue-300">
-                        @{msg.profiles?.username || 'Unknown'}
-                      </span>
-                      <span>
-                        {new Date(msg.created_at).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </div>
-                    <p className="text-slate-200">{msg.message}</p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                placeholder={
-                  currentUser
-                    ? "Type your message..."
-                    : "Please sign in to send messages"
-                }
-                disabled={!currentUser}
-                className={`flex-1 p-3 rounded-lg text-white placeholder-slate-500 focus:outline-none ${
-                  currentUser
-                    ? 'bg-slate-900 border border-blue-500/30 focus:border-blue-500'
-                    : 'bg-slate-800 border border-slate-700 cursor-not-allowed'
-                }`}
-              />
-              <button
-                onClick={sendMessage}
-                disabled={!currentUser || !newMessage.trim()}
-                className={`px-6 py-3 font-bold rounded-lg transition-all ${
-                  currentUser && newMessage.trim()
-                    ? 'bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white'
-                    : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                Send
-              </button>
-            </div>
-            <p className="text-xs text-slate-500 mt-2">
-              💡 Connect your wallet or sign in with email to participate in chat and challenges.
-            </p>
-          </div>
-        </div>
-
         {/* Features Grid */}
-        <div className="mt-16 grid md:grid-cols-3 gap-6">
-          <div className="bg-slate-800/50 p-6 rounded-xl border border-blue-500/10">
-            <h3 className="text-xl font-bold text-blue-300 mb-3">🔒 Maximum Security</h3>
+        <div className="grid md:grid-cols-3 gap-8 mb-16">
+          <div className="p-6 bg-gradient-to-br from-blue-900/20 to-slate-800/50 rounded-2xl border border-blue-500/20">
+            <div className="text-3xl mb-4">👛</div>
+            <h3 className="text-xl font-bold text-white mb-3">Wallet First</h3>
             <p className="text-slate-300">
-              Your keys never leave your device. You maintain full control over your assets.
+              Create or import your Solana wallet instantly. No email required to start chatting.
             </p>
           </div>
           
-          <div className="bg-slate-800/50 p-6 rounded-xl border border-yellow-500/10">
-            <h3 className="text-xl font-bold text-yellow-300 mb-3">⚡ Lightning Fast</h3>
+          <div className="p-6 bg-gradient-to-br from-purple-900/20 to-slate-800/50 rounded-2xl border border-purple-500/20">
+            <div className="text-3xl mb-4">⚔️</div>
+            <h3 className="text-xl font-bold text-white mb-3">Trading Duels</h3>
             <p className="text-slate-300">
-              Powered by Solana network, transactions are confirmed in under 2 seconds.
+              Challenge other traders. Win based on PnL in timed trading sessions.
             </p>
           </div>
           
-          <div className="bg-slate-800/50 p-6 rounded-xl border border-blue-500/10">
-            <h3 className="text-xl font-bold text-blue-300 mb-3">🌐 Truly Decentralized</h3>
+          <div className="p-6 bg-gradient-to-br from-green-900/20 to-slate-800/50 rounded-2xl border border-green-500/20">
+            <div className="text-3xl mb-4">💬</div>
+            <h3 className="text-xl font-bold text-white mb-3">Community Chat</h3>
             <p className="text-slate-300">
-              No sign-up required, no KYC, global access to digital assets.
+              Real-time chat with 300-character messages. Discuss strategies and results.
             </p>
           </div>
         </div>
 
-        {/* Call-to-Action Sections */}
-        <div className="mt-16 grid md:grid-cols-2 gap-8">
-          <div className="text-center p-8 bg-gradient-to-br from-blue-900/20 to-slate-800 rounded-2xl border border-blue-500/20">
-            <h2 className="text-2xl font-bold text-white mb-4">Instant Token Swaps</h2>
+        {/* Stats Overview */}
+        {isAuthenticated && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16">
+            <div className="p-4 bg-slate-800/30 rounded-xl text-center">
+              <div className="text-2xl font-bold text-white">{activeChallenges}</div>
+              <div className="text-sm text-slate-400">Active Challenges</div>
+            </div>
+            <div className="p-4 bg-slate-800/30 rounded-xl text-center">
+              <div className="text-2xl font-bold text-white">{unreadMessages}</div>
+              <div className="text-sm text-slate-400">New Messages</div>
+            </div>
+            <div className="p-4 bg-slate-800/30 rounded-xl text-center">
+              <div className="text-2xl font-bold text-white">
+                {profile?.user_type === 'wallet_only' ? 'Wallet' : 'Full'}
+              </div>
+              <div className="text-sm text-slate-400">Account Type</div>
+            </div>
+            <div className="p-4 bg-slate-800/30 rounded-xl text-center">
+              <div className="text-2xl font-bold text-white">0</div>
+              <div className="text-sm text-slate-400">Your Challenges</div>
+            </div>
+          </div>
+        )}
+
+        {/* Main Action Sections */}
+        <div className="grid lg:grid-cols-2 gap-8">
+          <div className="p-8 bg-gradient-to-br from-blue-900/30 to-slate-800/50 rounded-2xl border border-blue-500/30">
+            <h2 className="text-2xl font-bold text-white mb-4">Start Trading</h2>
             <p className="text-slate-300 mb-6">
-              Swap between hundreds of tokens directly in CiBL Wallet with best rates.
-              <span className="block text-yellow-300 mt-2">
-                Low 0.5% service fee supports wallet development.
-              </span>
+              Swap tokens instantly with Jupiter aggregation. Best rates with 0.5% service fee.
             </p>
             <Link
               href="/swap"
-              className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold rounded-lg transition-all"
+              className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-xl font-bold transition-all"
             >
               <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -300,14 +258,14 @@ export default function Home() {
             </Link>
           </div>
 
-          <div className="text-center p-8 bg-gradient-to-br from-slate-800/40 to-blue-900/20 rounded-2xl border border-blue-500/20">
-            <h2 className="text-2xl font-bold text-white mb-4">Explore dApps Securely</h2>
+          <div className="p-8 bg-gradient-to-br from-purple-900/30 to-slate-800/50 rounded-2xl border border-purple-500/30">
+            <h2 className="text-2xl font-bold text-white mb-4">Explore dApps</h2>
             <p className="text-slate-300 mb-6">
-              Use our built-in browser to connect your CiBL Wallet directly to Solana applications.
+              Access Solana dApps securely through our built-in browser.
             </p>
             <Link
               href="/browser"
-              className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold rounded-lg transition-all"
+              className="inline-flex items-center px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 rounded-xl font-bold transition-all"
             >
               <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
@@ -316,13 +274,87 @@ export default function Home() {
             </Link>
           </div>
         </div>
+
+        {/* Mobile Action Buttons (Fixed) */}
+        <div className="lg:hidden fixed bottom-6 right-6 flex flex-col gap-3 z-30">
+          <button
+            onClick={() => setShowChat(true)}
+            className="w-14 h-14 rounded-full bg-gradient-to-r from-blue-600 to-blue-700 flex items-center justify-center shadow-lg relative"
+            aria-label="Open chat"
+          >
+            <span className="text-2xl">💬</span>
+            {unreadMessages > 0 && (
+              <span className="absolute -top-1 -right-1 w-6 h-6 bg-gradient-to-r from-yellow-500 to-red-500 rounded-full text-xs font-bold flex items-center justify-center animate-pulse">
+                {unreadMessages > 9 ? '9+' : unreadMessages}
+              </span>
+            )}
+          </button>
+          
+          <button
+            onClick={() => setShowChallenge(true)}
+            className="w-14 h-14 rounded-full bg-gradient-to-r from-yellow-600 to-orange-600 flex items-center justify-center shadow-lg relative"
+            aria-label="Open challenges"
+          >
+            <span className="text-2xl">⚔️</span>
+            {activeChallenges > 0 && (
+              <span className="absolute -top-1 -right-1 w-6 h-6 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full text-xs font-bold flex items-center justify-center">
+                {activeChallenges > 9 ? '9+' : activeChallenges}
+              </span>
+            )}
+          </button>
+        </div>
       </main>
 
-      <footer className="mt-16 py-6 border-t border-slate-800 text-center text-slate-500 text-sm">
-        <p>© 2025 CiBL Wallet. All rights reserved. Built on Solana.</p>
-        <p className="mt-2 text-xs">
-          This is a demo application. Use at your own risk.
-        </p>
+      <footer className="mt-16 py-8 border-t border-slate-800">
+        <div className="container mx-auto px-4">
+          <div className="grid md:grid-cols-4 gap-8 mb-8">
+            <div>
+              <h3 className="text-lg font-bold text-white mb-4">CiBL Wallet</h3>
+              <p className="text-slate-400 text-sm">
+                Decentralized Solana wallet with integrated trading challenges and community chat.
+              </p>
+            </div>
+            
+            <div>
+              <h4 className="font-bold text-white mb-4">Features</h4>
+              <ul className="space-y-2 text-sm text-slate-400">
+                <li>Wallet Management</li>
+                <li>Trading Challenges</li>
+                <li>Community Chat</li>
+                <li>Token Swaps</li>
+                <li>dApp Browser</li>
+              </ul>
+            </div>
+            
+            <div>
+              <h4 className="font-bold text-white mb-4">Resources</h4>
+              <ul className="space-y-2 text-sm text-slate-400">
+                <li><a href="#" className="hover:text-blue-400">Documentation</a></li>
+                <li><a href="#" className="hover:text-blue-400">GitHub</a></li>
+                <li><a href="#" className="hover:text-blue-400">API Reference</a></li>
+                <li><a href="#" className="hover:text-blue-400">Support</a></li>
+              </ul>
+            </div>
+            
+            <div>
+              <h4 className="font-bold text-white mb-4">Legal</h4>
+              <ul className="space-y-2 text-sm text-slate-400">
+                <li><a href="#" className="hover:text-blue-400">Privacy Policy</a></li>
+                <li><a href="#" className="hover:text-blue-400">Terms of Service</a></li>
+                <li><a href="#" className="hover:text-blue-400">Risk Disclosure</a></li>
+              </ul>
+            </div>
+          </div>
+          
+          <div className="pt-8 border-t border-slate-800 text-center">
+            <p className="text-slate-500 text-sm">
+              © {new Date().getFullYear()} CiBL Wallet. All rights reserved. Built on Solana.
+            </p>
+            <p className="text-xs text-slate-600 mt-2">
+              This is a demo application. Use at your own risk.
+            </p>
+          </div>
+        </div>
       </footer>
     </div>
   );
