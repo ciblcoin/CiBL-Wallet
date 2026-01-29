@@ -213,4 +213,23 @@ cibl-wallet/
     └── page.jsx            # Frontend integration
 
 
+ 
 
+
+
+
+CiBL-Wallet/
+├── node_modules/
+├── public/                  
+│   ├── icons/
+│   │   ├── icon-128.png    
+│   │   ├── icon-192.png
+│   │   └── splash.png       
+│   └── index.html         
+├── src/                    
+├── android/                  
+├── ios/                     
+├── capacitor.config.ts      
+├── package.json             
+├── next.config.js         
+└── .env                    
