@@ -252,3 +252,63 @@ CiBL-Wallet/
 ├── target/           
 ├── Anchor.toml     
 └── Cargo.toml                   
+
+
+
+
+
+
+
+
+
+
+
+
+Project Structure (Full Stack & Multi-Chain)
+
+CiBL-Wallet/
+├── anchor/                        # Solana Smart Contracts (Rust/Anchor)
+│   ├── programs/
+│   │   └── trading_challenge/     # Escrow logic for betting
+│   ├── tests/                     # Integration tests for Solana programs
+│   ├── Anchor.toml                # Anchor configuration
+│   └── Cargo.toml                 # Rust dependencies
+│
+├── cloudflare-worker/             # Serverless Backend & Oracle
+│   ├── src/
+│   │   ├── index.js               # Cron jobs for settling challenges
+│   │   └── rpc-proxy.js           # Smart RPC Load Balancer
+│   └── wrangler.toml              # Deployment config for Cloudflare
+│
+├── src/                           # Shared Logic & Frontend (React Native)
+│   ├── api/                       # External API Integrations
+│   │   ├── coingecko.js           # Real-time Price Feeds
+│   │   └── supabaseClient.js      # Supabase DB & Real-time Chat
+│   ├── blockchain/                # Multi-chain Core Logic
+│   │   ├── index.js               # Unified Balance & Tx Manager
+│   │   ├── solana/                # Solana-specific logic (Priority)
+│   │   └── evm/                   # Ethereum/Polygon/BSC logic
+│   ├── components/                # UI Components
+│   │   ├── chat/                  # Public Chat & Challenge UI
+│   │   ├── dashboard/             # Assets, Total Balance, Charts
+│   │   └── common/                # Reusable UI elements (Buttons, Icons)
+│   ├── navigation/                # App Routing (Stack/Tabs)
+│   ├── screens/                   # Main Screens
+│   │   ├── HomeScreen.js          # Dashboard (Prioritizing Solana)
+│   │   ├── ChatScreen.js          # Live Chat Lobby
+│   │   └── WalletSetup.js         # Mnemonic Generation & Recovery
+│   ├── store/                     # Global State Management (Redux/Context)
+│   └── utils/                     # Helpers (Encryption, Formatting)
+│
+├── android/                       # Native Android Project Files
+├── ios/                           # Native iOS Project Files (Swift/Obj-C)
+├── web/                           # PWA & Web Dashboard (Optional React build)
+│
+├── supabase/                      # Database Schema & Edge Functions
+│   ├── migrations/                # SQL scripts for chat & challenge tables
+│   └── config.toml                # Supabase configuration
+│
+├── .env.example                   # Template for environment variables
+├── .gitignore                     # Standard ignored files (Keys, Node_modules)
+├── README.md                      # Documentation
+└── package.json                   # Project dependencies & scripts
