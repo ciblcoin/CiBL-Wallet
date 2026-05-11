@@ -1,4 +1,5 @@
 export const dynamic = 'force-dynamic';
+export const runtime = 'edge';
 
 import { Inter } from 'next/font/google';
 import './globals.css';
