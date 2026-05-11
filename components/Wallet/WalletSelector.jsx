@@ -14,9 +14,10 @@ import {
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import {
   PhantomWalletAdapter,
+} from '@solana/wallet-adapter-phantom';
+import {
   SolflareWalletAdapter,
-  TorusWalletAdapter,
-} from '@solana/wallet-adapter-wallets';
+} from '@solana/wallet-adapter-solflare';
 import { clusterApiUrl } from '@solana/web3.js';
 import { createClient } from '@/lib/supabase/client';
 import useUser from '@/hooks/useUser';
